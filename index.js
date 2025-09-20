@@ -1,4 +1,68 @@
-const { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require('discord.js');
+// Average Price Handler
+async function handleAveragePrice(interaction) {
+    const searchName = interaction.options.getString('gegenstand').trim();
+
+    await interaction.deferReply();
+
+    db.all(
+        'SELECT market_price as price, state_value FROM price_history WHERE display_name = ? OR item_name = ?',
+        [searchName, searchName.toLowerCase()],
+        (err, rows) => {
+            if (err) {
+                console.error(err);
+                interaction.followUp('Fehler beim Berechnen des Durchschnitts!');
+                return;
+            }
+
+            if (rows.length === 0) {
+                interaction.followUp(`❌ Keine Daten für "${searchName}" gefunden!`);
+                return;
+            }
+
+            const marketPrices = rows.map(row => row.price);
+            const statePrices = rows.filter(row => row.state_value).map(row => row.state_value);
+            
+            const averageMarket = marketPrices.reduce((sum, price) => sum + price, 0) / marketPrices.length;
+            const minMarket = Math.min(...marketPrices);
+            const maxMarket = Math.max(...marketPrices);
+
+            const embed = new EmbedBuilder()
+                .setColor('#9900ff')
+                .setTitle(`📊 Statistiken: ${searchName}`)
+                .setDescription(`**Basierend auf ${rows.length} Preiseinträgen**`)
+                .addFields(
+                    { name: '💰 Ø Marktpreis', value: `**${formatCurrency(averageMarket)}**`, inline: true },
+                    { name: '📉 Min. Marktpreis', value: `**${formatCurrency(minMarket)}**`, inline: true },
+                    { name: '📈 Max. Marktpreis', value: `**${formatCurrency(maxMarket)}**`, inline: true },
+                    { name: '📊 Markt-Schwankung', value: `**${formatCurrency(maxMarket - minMarket)}**`, inline: true },
+                    { name: '📈 Markt-Varianz', value: `${((maxMarket - minMarket) / averageMarket * 100).toFixed(1)}%`, inline: true },
+                    { name: '📋 Gesamte Einträge', value: `**${rows.length}**`, inline: true }
+                )
+                .setFooter({ text: 'GTA V Grand RP • Strandmarkt Bot' })
+                .setTimestamp();
+
+            // Staatswert-Statistiken hinzufügen wenn verfügbar
+            if (statePrices.length > 0) {
+                const averageState = statePrices.reduce((sum, price) => sum + price, 0) / statePrices.length;
+                const minState = Math.min(...statePrices);
+                const maxState = Math.max(...statePrices);
+                const avgProfit = averageMarket - averageState;
+                const avgProfitPercent = ((avgProfit / averageState) * 100).toFixed(1);
+
+                embed.addFields(
+                    { name: '🏛️ Ø Staatswert', value: `**${formatCurrency(averageState)}**`, inline: true },
+                    { name: '📉 Min. Staatswert', value: `**${formatCurrency(minState)}**`, inline: true },
+                    { name: '📈 Max. Staatswert', value: `**${formatCurrency(maxState)}**`, inline: true },
+                    { name: '💹 Ø Gewinn/Verlust', value: `**${formatCurrency(avgProfit)}**`, inline: true },
+                    { name: '📊 Ø Gewinn %', value: `**${avgProfitPercent}%**`, inline: true },
+                    { name: '🏛️ Staatswert-Einträge', value: `**${statePrices.length}**`, inline: true }
+                );
+            }
+
+            interaction.followUp({ embeds: [embed] });
+        }
+    );
+}const { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
@@ -14,21 +78,6 @@ const client = new Client({
 
 // Database Setup
 const db = new sqlite3.Database('./strandmarkt.db');
-
-// Chart Configuration
-const width = 800;
-const height = 400;
-const chartJSNodeCanvas = new ChartJSNodeCanvas({ width, height });
-
-// Hilfsfunktion für Geld-Formatierung
-function formatCurrency(amount) {
-    return new Intl.NumberFormat('de-DE', {
-        style: 'currency',
-        currency: 'EUR',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0
-    }).format(amount);
-}
 
 // Initialize Database
 db.serialize(() => {
@@ -54,31 +103,6 @@ db.serialize(() => {
         image_url TEXT,
         date_added DATETIME DEFAULT CURRENT_TIMESTAMP,
         added_by TEXT NOT NULL
-    )`);
-
-    // Tabelle für Angebote/Tickets
-    db.run(`CREATE TABLE IF NOT EXISTS offers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT NOT NULL,
-        username TEXT NOT NULL,
-        phone_number TEXT,
-        items TEXT NOT NULL,
-        offer_type TEXT NOT NULL,
-        status TEXT DEFAULT 'open',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        channel_id TEXT,
-        message_id TEXT
-    )`);
-
-    // Tabelle für Angebot-Antworten
-    db.run(`CREATE TABLE IF NOT EXISTS offer_responses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        offer_id INTEGER NOT NULL,
-        responder_id TEXT NOT NULL,
-        responder_username TEXT NOT NULL,
-        response_text TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (offer_id) REFERENCES offers (id)
     )`);
 
     // Migration für bestehende Datenbanken (falls jemand von alter Version kommt)
@@ -135,6 +159,21 @@ db.serialize(() => {
     });
 });
 
+// Chart Configuration
+const width = 800;
+const height = 400;
+const chartJSNodeCanvas = new ChartJSNodeCanvas({ width, height });
+
+// Hilfsfunktion für Geld-Formatierung
+function formatCurrency(amount) {
+    return new Intl.NumberFormat('de-DE', {
+        style: 'currency',
+        currency: 'EUR',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+    }).format(amount);
+}
+
 // Bot Events
 client.once('ready', () => {
     console.log(`Bot ist online als ${client.user.tag}!`);
@@ -160,9 +199,9 @@ async function registerCommands() {
                 option.setName('staatswert')
                     .setDescription('Staatswert/NPC-Preis (optional)')
                     .setRequired(false))
-            .addAttachmentOption(option =>
+            .addStringOption(option =>
                 option.setName('bild')
-                    .setDescription('Bild-Datei hochladen (optional)')
+                    .setDescription('URL zum Bild (optional)')
                     .setRequired(false)),
 
         new SlashCommandBuilder()
@@ -194,49 +233,7 @@ async function registerCommands() {
                 option.setName('gegenstand')
                     .setDescription('Name des Gegenstands')
                     .setRequired(true)
-                    .setAutocomplete(true)),
-
-        new SlashCommandBuilder()
-            .setName('angebot-erstellen')
-            .setDescription('Erstelle ein neues Handelsangebot')
-            .addStringOption(option =>
-                option.setName('typ')
-                    .setDescription('Art des Angebots')
-                    .setRequired(true)
-                    .addChoices(
-                        { name: '💰 Verkaufe', value: 'sell' },
-                        { name: '🛒 Kaufe', value: 'buy' },
-                        { name: '🔄 Tausche', value: 'trade' }
-                    ))
-            .addStringOption(option =>
-                option.setName('gegenstände')
-                    .setDescription('Was bietest du an/suchst du? (z.B. "AK-47 x2, Pistole x1")')
-                    .setRequired(true))
-            .addStringOption(option =>
-                option.setName('telefon')
-                    .setDescription('Deine Ingame-Telefonnummer (optional)')
-                    .setRequired(false)),
-
-        new SlashCommandBuilder()
-            .setName('meine-angebote')
-            .setDescription('Zeige deine aktiven Angebote'),
-
-        new SlashCommandBuilder()
-            .setName('angebote-suchen')
-            .setDescription('Suche nach Angeboten')
-            .addStringOption(option =>
-                option.setName('typ')
-                    .setDescription('Nach welcher Art suchen?')
-                    .setRequired(false)
-                    .addChoices(
-                        { name: '💰 Verkaufsangebote', value: 'sell' },
-                        { name: '🛒 Kaufgesuche', value: 'buy' },
-                        { name: '🔄 Tauschangebote', value: 'trade' }
-                    ))
-            .addStringOption(option =>
-                option.setName('gegenstand')
-                    .setDescription('Nach bestimmtem Gegenstand suchen')
-                    .setRequired(false))
+                    .setAutocomplete(true))
     ];
 
     try {
@@ -270,31 +267,16 @@ client.on('interactionCreate', async interaction => {
                 case 'durchschnittspreis':
                     await handleAveragePrice(interaction);
                     break;
-                case 'angebot-erstellen':
-                    await handleCreateOffer(interaction);
-                    break;
-                case 'meine-angebote':
-                    await handleMyOffers(interaction);
-                    break;
-                case 'angebote-suchen':
-                    await handleSearchOffers(interaction);
-                    break;
             }
         } catch (error) {
             console.error('Command Error:', error);
-            if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({
-                    content: 'Es ist ein Fehler aufgetreten!',
-                    ephemeral: true
-                });
-            }
+            await interaction.reply({
+                content: 'Es ist ein Fehler aufgetreten!',
+                ephemeral: true
+            });
         }
     } else if (interaction.isAutocomplete()) {
         await handleAutocomplete(interaction);
-    } else if (interaction.isButton()) {
-        await handleButtonInteraction(interaction);
-    } else if (interaction.isModalSubmit()) {
-        await handleModalSubmit(interaction);
     }
 });
 
@@ -321,47 +303,16 @@ async function handleAutocomplete(interaction) {
     );
 }
 
-// Button Interaction Handler
-async function handleButtonInteraction(interaction) {
-    const [action, offerId, responderId] = interaction.customId.split('_');
-    
-    if (action === 'respond' && interaction.user.id !== responderId) {
-        return interaction.reply({
-            content: '❌ Du kannst nur auf deine eigenen Antwort-Buttons klicken!',
-            ephemeral: true
-        });
-    }
-
-    switch (action) {
-        case 'respond':
-            await handleOfferResponse(interaction, offerId);
-            break;
-        case 'close':
-            await handleOfferClose(interaction, offerId);
-            break;
-    }
-}
-
 // Add Price Handler
 async function handleAddPrice(interaction) {
     const displayName = interaction.options.getString('gegenstand').trim();
     const itemName = displayName.toLowerCase();
     const marketPrice = interaction.options.getNumber('marktpreis');
     const stateValue = interaction.options.getNumber('staatswert');
-    const imageAttachment = interaction.options.getAttachment('bild');
+    const imageUrl = interaction.options.getString('bild');
     const userId = interaction.user.tag;
 
     await interaction.deferReply();
-
-    let imageUrl = null;
-    if (imageAttachment) {
-        // Prüfe ob es ein Bild ist
-        if (imageAttachment.contentType && imageAttachment.contentType.startsWith('image/')) {
-            imageUrl = imageAttachment.url;
-        } else {
-            return interaction.followUp('❌ Die hochgeladene Datei muss ein Bild sein (PNG, JPG, GIF, etc.)!');
-        }
-    }
 
     // Zur Historie hinzufügen
     db.run(
@@ -446,480 +397,8 @@ async function handleAddPrice(interaction) {
                     embed.setThumbnail(finalImageUrl);
                 }
 
-        }
-    );
-}
-
-// Average Price Handler
-async function handleAveragePrice(interaction) {
-    const searchName = interaction.options.getString('gegenstand').trim();
-
-    await interaction.deferReply();
-
-    db.all(
-        'SELECT market_price, state_value FROM price_history WHERE display_name = ? OR item_name = ?',
-        [searchName, searchName.toLowerCase()],
-        (err, rows) => {
-            if (err) {
-                console.error(err);
-                interaction.followUp('Fehler beim Berechnen des Durchschnitts!');
-                return;
+                interaction.followUp({ embeds: [embed] });
             }
-
-            if (rows.length === 0) {
-                interaction.followUp(`❌ Keine Daten für "${searchName}" gefunden!`);
-                return;
-            }
-
-            const marketPrices = rows.map(row => parseFloat(row.market_price)).filter(price => !isNaN(price));
-            const statePrices = rows.map(row => parseFloat(row.state_value)).filter(price => !isNaN(price) && price > 0);
-            
-            if (marketPrices.length === 0) {
-                interaction.followUp(`❌ Keine gültigen Marktpreise für "${searchName}" gefunden!`);
-                return;
-            }
-
-            const averageMarket = marketPrices.reduce((sum, price) => sum + price, 0) / marketPrices.length;
-            const minMarket = Math.min(...marketPrices);
-            const maxMarket = Math.max(...marketPrices);
-
-            const embed = new EmbedBuilder()
-                .setColor('#9900ff')
-                .setTitle(`📊 Statistiken: ${searchName}`)
-                .setDescription(`**Basierend auf ${rows.length} Preiseinträgen**`)
-                .addFields(
-                    { name: '💰 Ø Marktpreis', value: `**${formatCurrency(averageMarket)}**`, inline: true },
-                    { name: '📉 Min. Marktpreis', value: `**${formatCurrency(minMarket)}**`, inline: true },
-                    { name: '📈 Max. Marktpreis', value: `**${formatCurrency(maxMarket)}**`, inline: true },
-                    { name: '📊 Markt-Schwankung', value: `**${formatCurrency(maxMarket - minMarket)}**`, inline: true },
-                    { name: '📈 Markt-Varianz', value: `${((maxMarket - minMarket) / averageMarket * 100).toFixed(1)}%`, inline: true },
-                    { name: '📋 Marktpreis-Einträge', value: `**${marketPrices.length}**`, inline: true }
-                )
-                .setFooter({ text: 'GTA V Grand RP • Strandmarkt Bot' })
-                .setTimestamp();
-
-            // Staatswert-Statistiken hinzufügen wenn verfügbar
-            if (statePrices.length > 0) {
-                const averageState = statePrices.reduce((sum, price) => sum + price, 0) / statePrices.length;
-                const minState = Math.min(...statePrices);
-                const maxState = Math.max(...statePrices);
-                const avgProfit = averageMarket - averageState;
-                const avgProfitPercent = ((avgProfit / averageState) * 100).toFixed(1);
-
-                embed.addFields(
-                    { name: '🏛️ Ø Staatswert', value: `**${formatCurrency(averageState)}**`, inline: true },
-                    { name: '📉 Min. Staatswert', value: `**${formatCurrency(minState)}**`, inline: true },
-                    { name: '📈 Max. Staatswert', value: `**${formatCurrency(maxState)}**`, inline: true },
-                    { name: '💹 Ø Gewinn/Verlust', value: `**${formatCurrency(avgProfit)}**`, inline: true },
-                    { name: '📊 Ø Gewinn %', value: `**${avgProfitPercent}%**`, inline: true },
-                    { name: '🏛️ Staatswert-Einträge', value: `**${statePrices.length}**`, inline: true }
-                );
-            } else {
-                embed.addFields({
-                    name: '🏛️ Staatswerte', 
-                    value: '*Keine Staatswerte verfügbar*', 
-                    inline: false
-                });
-            }
-
-            interaction.followUp({ embeds: [embed] });
-        }
-    );
-}
-
-// Create Offer Handler
-async function handleCreateOffer(interaction) {
-    const offerType = interaction.options.getString('typ');
-    const items = interaction.options.getString('gegenstände');
-    const phoneNumber = interaction.options.getString('telefon');
-    const userId = interaction.user.id;
-    const username = interaction.user.displayName || interaction.user.username;
-
-    await interaction.deferReply();
-
-    // Angebot in Datenbank speichern
-    db.run(
-        'INSERT INTO offers (user_id, username, phone_number, items, offer_type) VALUES (?, ?, ?, ?, ?)',
-        [userId, username, phoneNumber, items, offerType],
-        function(err) {
-            if (err) {
-                console.error(err);
-                interaction.followUp('❌ Fehler beim Erstellen des Angebots!');
-                return;
-            }
-
-            const offerId = this.lastID;
-            
-            // Emoji und Text je nach Typ
-            const typeEmoji = {
-                'sell': '💰',
-                'buy': '🛒', 
-                'trade': '🔄'
-            };
-            
-            const typeText = {
-                'sell': 'Verkaufe',
-                'buy': 'Kaufe',
-                'trade': 'Tausche'
-            };
-
-            const embed = new EmbedBuilder()
-                .setColor(offerType === 'sell' ? '#00ff00' : offerType === 'buy' ? '#ff6600' : '#0099ff')
-                .setTitle(`${typeEmoji[offerType]} ${typeText[offerType]}`)
-                .setDescription(`**${items}**`)
-                .addFields(
-                    { name: '👤 Anbieter', value: `<@${userId}>`, inline: true },
-                    { name: '📞 Telefon', value: phoneNumber || '*Nicht angegeben*', inline: true },
-                    { name: '🆔 Angebots-ID', value: `#${offerId}`, inline: true },
-                    { name: '📅 Erstellt', value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true },
-                    { name: '🔄 Status', value: '🟢 **Aktiv**', inline: true }
-                )
-                .setFooter({ text: 'GTA V Grand RP • Handelsplatz' })
-                .setTimestamp();
-
-            // Buttons für Interaktion
-            const row = {
-                type: 1,
-                components: [
-                    {
-                        type: 2,
-                        style: 1,
-                        label: 'Interesse zeigen',
-                        emoji: '✋',
-                        custom_id: `respond_${offerId}_${userId}`
-                    },
-                    {
-                        type: 2,
-                        style: 4,
-                        label: 'Angebot schließen',
-                        emoji: '🔒',
-                        custom_id: `close_${offerId}_${userId}`
-                    }
-                ]
-            };
-
-            interaction.followUp({ 
-                embeds: [embed],
-                components: [row],
-                content: `✅ **Angebot erfolgreich erstellt!** 🎯\n\n*Andere Spieler können jetzt Interesse zeigen und dich kontaktieren.*`
-            }).then(message => {
-                // Message ID und Channel ID speichern für spätere Updates
-                db.run(
-                    'UPDATE offers SET channel_id = ?, message_id = ? WHERE id = ?',
-                    [interaction.channelId, message.id, offerId]
-                );
-            });
-        }
-    );
-}
-
-// My Offers Handler
-async function handleMyOffers(interaction) {
-    const userId = interaction.user.id;
-
-    await interaction.deferReply({ ephemeral: true });
-
-    db.all(
-        'SELECT * FROM offers WHERE user_id = ? AND status = "open" ORDER BY created_at DESC LIMIT 10',
-        [userId],
-        (err, rows) => {
-            if (err) {
-                console.error(err);
-                interaction.followUp({ content: '❌ Fehler beim Abrufen deiner Angebote!', ephemeral: true });
-                return;
-            }
-
-            if (rows.length === 0) {
-                interaction.followUp({ 
-                    content: '📭 Du hast keine aktiven Angebote.\n\nErstelle eines mit `/angebot-erstellen`!', 
-                    ephemeral: true 
-                });
-                return;
-            }
-
-            const embed = new EmbedBuilder()
-                .setColor('#9900ff')
-                .setTitle('📋 Deine aktiven Angebote')
-                .setDescription(`Du hast **${rows.length}** aktive Angebote`)
-                .setFooter({ text: 'GTA V Grand RP • Handelsplatz' })
-                .setTimestamp();
-
-            rows.forEach(offer => {
-                const typeEmoji = {
-                    'sell': '💰',
-                    'buy': '🛒',
-                    'trade': '🔄'
-                };
-
-                const createdTime = Math.floor(new Date(offer.created_at).getTime() / 1000);
-                
-                embed.addFields({
-                    name: `${typeEmoji[offer.offer_type]} Angebot #${offer.id}`,
-                    value: `**${offer.items}**\n📞 ${offer.phone_number || '*Keine Nummer*'} • <t:${createdTime}:R>`,
-                    inline: false
-                });
-            });
-
-            interaction.followUp({ embeds: [embed], ephemeral: true });
-        }
-    );
-}
-
-// Search Offers Handler  
-async function handleSearchOffers(interaction) {
-    const filterType = interaction.options.getString('typ');
-    const searchItem = interaction.options.getString('gegenstand');
-
-    await interaction.deferReply();
-
-    let query = 'SELECT * FROM offers WHERE status = "open"';
-    let params = [];
-
-    if (filterType) {
-        query += ' AND offer_type = ?';
-        params.push(filterType);
-    }
-
-    if (searchItem) {
-        query += ' AND items LIKE ?';
-        params.push(`%${searchItem}%`);
-    }
-
-    query += ' ORDER BY created_at DESC LIMIT 20';
-
-    db.all(query, params, (err, rows) => {
-        if (err) {
-            console.error(err);
-            interaction.followUp('❌ Fehler beim Suchen von Angeboten!');
-            return;
-        }
-
-        if (rows.length === 0) {
-            interaction.followUp('📭 Keine Angebote gefunden die deinen Kriterien entsprechen.');
-            return;
-        }
-
-        const embed = new EmbedBuilder()
-            .setColor('#ff9900')
-            .setTitle('🔍 Gefundene Angebote')
-            .setDescription(`**${rows.length} Angebote** gefunden`)
-            .setFooter({ text: 'GTA V Grand RP • Handelsplatz' })
-            .setTimestamp();
-
-        rows.forEach(offer => {
-            const typeEmoji = {
-                'sell': '💰',
-                'buy': '🛒',
-                'trade': '🔄'
-            };
-            
-            const typeText = {
-                'sell': 'Verkaufe',
-                'buy': 'Kaufe',
-                'trade': 'Tausche'
-            };
-
-            const createdTime = Math.floor(new Date(offer.created_at).getTime() / 1000);
-            
-            embed.addFields({
-                name: `${typeEmoji[offer.offer_type]} ${typeText[offer.offer_type]} - Angebot #${offer.id}`,
-                value: `**${offer.items}**\n👤 ${offer.username} | 📞 ${offer.phone_number || '*Keine Nummer*'} | <t:${createdTime}:R>`,
-                inline: false
-            });
-        });
-
-        interaction.followUp({ embeds: [embed] });
-    });
-}
-
-// Offer Response Handler
-async function handleOfferResponse(interaction, offerId) {
-    const responderId = interaction.user.id;
-
-    // Prüfe ob Angebot existiert und aktiv ist
-    db.get('SELECT * FROM offers WHERE id = ? AND status = "open"', [offerId], (err, offer) => {
-        if (err || !offer) {
-            return interaction.reply({
-                content: '❌ Angebot nicht gefunden oder bereits geschlossen!',
-                ephemeral: true
-            });
-        }
-
-        if (offer.user_id === responderId) {
-            return interaction.reply({
-                content: '❌ Du kannst nicht auf dein eigenes Angebot antworten!',
-                ephemeral: true
-            });
-        }
-
-        // Modal für Antwort erstellen
-        const modal = {
-            title: `Interesse an Angebot #${offerId}`,
-            custom_id: `offer_response_${offerId}`,
-            components: [
-                {
-                    type: 1,
-                    components: [
-                        {
-                            type: 4,
-                            custom_id: 'response_text',
-                            label: 'Deine Nachricht an den Anbieter',
-                            style: 2,
-                            placeholder: 'z.B.: Bin interessiert! Meine Nummer: 123-456. Wann können wir uns treffen?',
-                            required: true,
-                            max_length: 1000
-                        }
-                    ]
-                },
-                {
-                    type: 1,
-                    components: [
-                        {
-                            type: 4,
-                            custom_id: 'contact_info',
-                            label: 'Deine Kontaktdaten (Ingame-Nummer, Discord, etc.)',
-                            style: 1,
-                            placeholder: 'Tel: 123-456 oder Discord: @username#1234',
-                            required: false,
-                            max_length: 200
-                        }
-                    ]
-                }
-            ]
-        };
-
-        interaction.showModal(modal);
-    });
-}
-
-// Offer Close Handler
-async function handleOfferClose(interaction, offerId) {
-    const userId = interaction.user.id;
-
-    db.get('SELECT * FROM offers WHERE id = ? AND user_id = ?', [offerId, userId], (err, offer) => {
-        if (err || !offer) {
-            return interaction.reply({
-                content: '❌ Angebot nicht gefunden oder du bist nicht der Ersteller!',
-                ephemeral: true
-            });
-        }
-
-        // Angebot schließen
-        db.run('UPDATE offers SET status = "closed" WHERE id = ?', [offerId], (err) => {
-            if (err) {
-                console.error(err);
-                return interaction.reply({
-                    content: '❌ Fehler beim Schließen des Angebots!',
-                    ephemeral: true
-                });
-            }
-
-            // Original-Message aktualisieren
-            const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
-                .setColor('#666666')
-                .addFields(
-                    { name: '🔄 Status', value: '🔒 **Geschlossen**', inline: true }
-                );
-
-            // Buttons deaktivieren
-            const disabledRow = {
-                type: 1,
-                components: [
-                    {
-                        type: 2,
-                        style: 2,
-                        label: 'Angebot geschlossen',
-                        emoji: '🔒',
-                        custom_id: 'disabled',
-                        disabled: true
-                    }
-                ]
-            };
-
-            interaction.update({
-                embeds: [updatedEmbed],
-                components: [disabledRow]
-            });
-        });
-    });
-}
-
-// Modal Submit Handler
-async function handleModalSubmit(interaction) {
-    if (interaction.customId.startsWith('offer_response_')) {
-        const offerId = interaction.customId.split('_')[2];
-        const responseText = interaction.fields.getTextInputValue('response_text');
-        const contactInfo = interaction.fields.getTextInputValue('contact_info') || 'Nicht angegeben';
-        const responderId = interaction.user.id;
-        const responderName = interaction.user.displayName || interaction.user.username;
-
-        // Antwort in Datenbank speichern
-        db.run(
-            'INSERT INTO offer_responses (offer_id, responder_id, responder_username, response_text) VALUES (?, ?, ?, ?)',
-            [offerId, responderId, responderName, `${responseText}\n\n📞 Kontakt: ${contactInfo}`],
-            function(err) {
-                if (err) {
-                    console.error(err);
-                    return interaction.reply({
-                        content: '❌ Fehler beim Senden der Antwort!',
-                        ephemeral: true
-                    });
-                }
-
-                // Angebot-Ersteller benachrichtigen
-                db.get('SELECT * FROM offers WHERE id = ?', [offerId], async (err, offer) => {
-                    if (err || !offer) {
-                        return interaction.reply({
-                            content: '❌ Angebot nicht gefunden!',
-                            ephemeral: true
-                        });
-                    }
-
-                    // DM an Angebot-Ersteller
-                    try {
-                        const offerCreator = await client.users.fetch(offer.user_id);
-                        
-                        const dmEmbed = new EmbedBuilder()
-                            .setColor('#00ff00')
-                            .setTitle('📬 Neue Antwort auf dein Angebot!')
-                            .setDescription(`**Angebot #${offerId}**: ${offer.items}`)
-                            .addFields(
-                                { name: '👤 Von', value: responderName, inline: true },
-                                { name: '📞 Kontakt', value: contactInfo, inline: true },
-                                { name: '💬 Nachricht', value: responseText, inline: false }
-                            )
-                            .setFooter({ text: 'GTA V Grand RP • Handelsplatz' })
-                            .setTimestamp();
-
-                        await offerCreator.send({ embeds: [dmEmbed] });
-                        
-                        interaction.reply({
-                            content: '✅ **Deine Nachricht wurde gesendet!**\n\nDer Anbieter wurde per DM benachrichtigt und kann dich jetzt kontaktieren.',
-                            ephemeral: true
-                        });
-                        
-                    } catch (dmError) {
-                        console.error('DM Error:', dmError);
-                        
-                        // Fallback: Public mention wenn DM fehlschlägt
-                        interaction.reply({
-                            content: `✅ **Nachricht gesendet!**\n\n<@${offer.user_id}>, du hast eine neue Antwort auf dein Angebot #${offerId}! 📬\n\n**Von:** ${responderName}\n**Kontakt:** ${contactInfo}\n**Nachricht:** ${responseText}`,
-                            allowedMentions: { users: [offer.user_id] }
-                        });
-                    }
-                });
-            }
-        );
-    }
-}
-
-// Error Handling
-process.on('unhandledRejection', error => {
-    console.error('Unhandled promise rejection:', error);
-});
-
-// Login
-client.login(process.env.DISCORD_TOKEN);
         );
     });
 }
@@ -987,7 +466,7 @@ async function handleShowAllPrices(interaction) {
     await interaction.deferReply();
 
     db.all(
-        'SELECT * FROM current_prices ORDER BY market_price DESC',
+        'SELECT * FROM current_prices ORDER BY item_name',
         (err, rows) => {
             if (err) {
                 console.error(err);
@@ -1006,6 +485,9 @@ async function handleShowAllPrices(interaction) {
                 .setDescription(`**${rows.length} Artikel verfügbar**`)
                 .setFooter({ text: 'GTA V Grand RP • Strandmarkt Bot' })
                 .setTimestamp();
+
+            // Sortiere nach Marktpreis (höchster zuerst)
+            rows.sort((a, b) => b.market_price - a.market_price);
 
             // Erstelle schönere Anzeige in Spalten
             let itemList = '';
@@ -1114,15 +596,10 @@ async function handlePriceHistory(interaction) {
                             beginAtZero: false,
                             title: {
                                 display: true,
-                                text: 'Preis in Euro (€)',
-                                font: { size: 14, weight: 'bold' },
-                                color: '#ffffff'
-                            },
-                            grid: {
-                                color: 'rgba(255, 255, 255, 0.1)'
+                                text: 'Preis (€)',
+                                font: { size: 14, weight: 'bold' }
                             },
                             ticks: {
-                                color: '#ffffff',
                                 callback: function(value) {
                                     return new Intl.NumberFormat('de-DE', {
                                         style: 'currency',
@@ -1135,22 +612,8 @@ async function handlePriceHistory(interaction) {
                         x: {
                             title: {
                                 display: true,
-                                text: 'Datum der Preisänderung',
-                                font: { size: 14, weight: 'bold' },
-                                color: '#ffffff'
-                            },
-                            grid: {
-                                color: 'rgba(255, 255, 255, 0.1)'
-                            },
-                            ticks: {
-                                color: '#ffffff'
-                            }
-                        }
-                    },
-                    plugins: {
-                        legend: {
-                            labels: {
-                                color: '#ffffff'
+                                text: 'Datum',
+                                font: { size: 14, weight: 'bold' }
                             }
                         }
                     }
@@ -1202,3 +665,60 @@ async function handlePriceHistory(interaction) {
 
                 interaction.followUp({ embeds: [embed] });
             }
+        }
+    );
+}
+
+// Average Price Handler
+async function handleAveragePrice(interaction) {
+    const itemName = interaction.options.getString('gegenstand').toLowerCase();
+
+    await interaction.deferReply();
+
+    db.all(
+        'SELECT price FROM price_history WHERE item_name = ?',
+        [itemName],
+        (err, rows) => {
+            if (err) {
+                console.error(err);
+                interaction.followUp('Fehler beim Berechnen des Durchschnitts!');
+                return;
+            }
+
+            if (rows.length === 0) {
+                interaction.followUp(`❌ Keine Daten für "${itemName}" gefunden!`);
+                return;
+            }
+
+            const prices = rows.map(row => row.price);
+            const average = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+            const minPrice = Math.min(...prices);
+            const maxPrice = Math.max(...prices);
+
+            const embed = new EmbedBuilder()
+                .setColor('#9900ff')
+                .setTitle(`📊 Statistiken: ${itemName}`)
+                .setDescription(`**Basierend auf ${rows.length} Preiseinträgen**`)
+                .addFields(
+                    { name: '💰 Durchschnittspreis', value: `**${formatCurrency(average)}**`, inline: true },
+                    { name: '📉 Niedrigster Preis', value: `**${formatCurrency(minPrice)}**`, inline: true },
+                    { name: '📈 Höchster Preis', value: `**${formatCurrency(maxPrice)}**`, inline: true },
+                    { name: '📊 Preisdifferenz', value: `**${formatCurrency(maxPrice - minPrice)}**`, inline: true },
+                    { name: '📈 Varianz', value: `${((maxPrice - minPrice) / average * 100).toFixed(1)}%`, inline: true },
+                    { name: '📋 Gesamte Einträge', value: `**${rows.length}**`, inline: true }
+                )
+                .setFooter({ text: 'GTA V Grand RP • Strandmarkt Bot' })
+                .setTimestamp();
+
+            interaction.followUp({ embeds: [embed] });
+        }
+    );
+}
+
+// Error Handling
+process.on('unhandledRejection', error => {
+    console.error('Unhandled promise rejection:', error);
+});
+
+// Login
+client.login(process.env.DISCORD_TOKEN);
