@@ -12,8 +12,10 @@ Ein Discord Bot zur Verwaltung von Strandmarktpreisen für GTA V Grand RP DE1 Se
 - **📊 Preisverlauf**: Komplette Historie aller Preisänderungen mit interaktiven Diagrammen
 - **📈 Statistiken**: Durchschnittspreise, Min/Max-Werte und Gewinn-Analysen
 - **🔍 Auto-Complete**: Intelligente Vorschläge für bereits eingetragene Artikel
-- **🖼️ Bilder**: Optionale Bilder zu Gegenständen hinzufügen
+- **🖼️ Bilder**: Direkte Datei-Uploads statt URLs - einfacher und sicherer
 - **🏛️ Staatswerte**: Vergleich zwischen Marktpreisen und offiziellen NPC-Preisen
+- **🛒 Handelsplatz**: Kaufen, Verkaufen und Tauschen mit anderen Spielern
+- **📞 Kontakt-System**: Automatische Benachrichtigungen bei Interesse an Angeboten
 - **💾 Datenschutz**: Alle Daten bleiben auf deinem Server - keine externen Services
 
 ## 🚀 Quick Start
@@ -76,7 +78,7 @@ Neuen Preis hinzufügen oder bestehenden aktualisieren
 - **Gegenstand**: Name des Items (z.B. "AK-47")
 - **Marktpreis**: Aktueller Handelspreis zwischen Spielern
 - **Staatswert**: Offizieller NPC-Preis (optional)
-- **Bild**: URL zu einem Bild (optional)
+- **Bild**: Datei direkt hochladen (optional) - PNG, JPG, GIF, etc.
 
 **Besonderheit**: Bestehende Werte (Staatswert, Bild) werden beibehalten wenn du sie nicht neu angibst!
 
@@ -104,11 +106,35 @@ Detaillierte Statistiken:
 - Min/Max-Werte und Schwankungsbreite
 - Durchschnittlicher Gewinn in € und %
 
+## 🛒 Handelsplatz Commands
+
+### `/angebot-erstellen`
+Erstelle ein Handelsangebot
+- **Typ**: Verkaufe 💰, Kaufe 🛒, oder Tausche 🔄
+- **Gegenstände**: Was bietest du an? (z.B. "AK-47 x2, Pistole x1")
+- **Telefon**: Deine Ingame-Nummer (optional)
+
+### `/meine-angebote`
+Zeigt deine aktiven Angebote (nur für dich sichtbar)
+
+### `/angebote-suchen`
+Suche nach Angeboten anderer Spieler:
+- **Typ**: Nach Verkauf/Kauf/Tausch filtern (optional)
+- **Gegenstand**: Nach bestimmten Items suchen (optional)
+
+### Angebots-System
+- **Interesse zeigen**: Andere können auf deine Angebote antworten
+- **Automatische DMs**: Du wirst benachrichtigt wenn jemand Interesse zeigt
+- **Ticket-System**: Sichere Kommunikation zwischen Käufer und Verkäufer
+- **Angebote schließen**: Einfach per Button wenn erledigt
+
 ## 🗄️ Datenbank
 
 Der Bot verwendet SQLite für lokale Datenspeicherung:
 - **current_prices**: Aktuelle Preise (überschreibbar)
 - **price_history**: Komplette Historie aller Änderungen
+- **offers**: Handelsangebote zwischen Spielern
+- **offer_responses**: Antworten auf Angebote
 - **Automatische Migration**: Alte Daten bleiben bei Updates erhalten
 
 ### Datenbank-Schema
@@ -136,6 +162,30 @@ CREATE TABLE price_history (
     image_url TEXT,
     date_added DATETIME,
     added_by TEXT
+);
+
+-- Handelsangebote
+CREATE TABLE offers (
+    id INTEGER PRIMARY KEY,
+    user_id TEXT,               -- Discord User ID
+    username TEXT,              -- Discord Username  
+    phone_number TEXT,          -- Ingame Telefon
+    items TEXT,                 -- Was wird angeboten/gesucht
+    offer_type TEXT,            -- sell, buy, trade
+    status TEXT,                -- open, closed
+    created_at DATETIME,
+    channel_id TEXT,            -- Wo wurde es gepostet
+    message_id TEXT             -- Discord Message ID
+);
+
+-- Angebot-Antworten
+CREATE TABLE offer_responses (
+    id INTEGER PRIMARY KEY,
+    offer_id INTEGER,           -- Referenz zu offers
+    responder_id TEXT,          -- Wer hat geantwortet
+    responder_username TEXT,
+    response_text TEXT,         -- Die Nachricht
+    created_at DATETIME
 );
 ```
 
@@ -165,23 +215,42 @@ docker-compose down
 
 ## 📈 Beispiele
 
-### Preis hinzufügen mit Auto-Complete
+### Preis hinzufügen mit Datei-Upload
 ```
 /preis-hinzufugen
-Gegenstand: AK-4  → Vorschlag: "AK-47"
+Gegenstand: AK-47
 Marktpreis: 15000
 Staatswert: 8500
+Bild: [Screenshot.png hochladen] ← Einfach Datei drag & drop!
+```
+
+### Angebot erstellen
+```
+/angebot-erstellen
+Typ: Verkaufe 💰
+Gegenstände: AK-47 x2, Desert Eagle x1, Munition x500
+Telefon: 123-456-789
 ```
 
 ### Ergebnis:
 ```
-✅ Preis erfolgreich aktualisiert!
-📦 Gegenstand: AK-47
-💰 Marktpreis: 15.000 €
-🏛️ Staatswert: 8.500 €
-📈 Gewinn/Verlust: 6.500 € (76.5%)
-ℹ️ Status: 🔄 Bestehender Eintrag aktualisiert
+💰 Verkaufe
+AK-47 x2, Desert Eagle x1, Munition x500
+
+👤 Anbieter: @SpielerName
+📞 Telefon: 123-456-789
+🆔 Angebots-ID: #42
+📅 Erstellt: vor 2 Minuten
+🔄 Status: 🟢 Aktiv
+
+[Interesse zeigen] [Angebot schließen]
 ```
+
+### Interesse zeigen:
+1. Anderer Spieler klickt "Interesse zeigen"
+2. Modal öffnet sich für Nachricht
+3. Anbieter bekommt DM mit Kontaktdaten
+4. Direkter Kontakt zwischen den Spielern
 
 ### Nur Marktpreis aktualisieren (Staatswert bleibt erhalten):
 ```
@@ -202,13 +271,17 @@ Marktpreis: 16000
 ## 📋 Roadmap
 
 - [ ] **Multi-Server Support**: Separate Datenbanken pro Discord Server
-- [ ] **Benachrichtigungen**: Auto-Alerts bei großen Preisänderungen
+- [ ] **Push-Benachrichtigungen**: Auto-Alerts bei großen Preisänderungen
 - [ ] **Export/Import**: CSV/Excel Export der Datenbank
 - [ ] **Admin Commands**: Daten löschen und bearbeiten
 - [ ] **REST API**: Externe Zugriffe auf die Preisdaten
 - [ ] **Backup System**: Automatische Cloud-Backups
 - [ ] **Price Alerts**: Benachrichtigungen bei Zielpreisen
 - [ ] **Kategorien**: Items in Kategorien gruppieren (Waffen, Autos, etc.)
+- [ ] **Angebot-Bewertungen**: Rating-System für Händler
+- [ ] **Automatische Angebot-Löschung**: Nach X Tagen inaktiv
+- [ ] **Handelsstatistiken**: Wer handelt am meisten, beliebteste Items
+- [ ] **Bulk-Uploads**: Mehrere Preise auf einmal hochladen
 
 ## 🚨 Troubleshooting
 
