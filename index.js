@@ -21,7 +21,7 @@ async function handleAveragePrice(interaction) {
 
             const marketPrices = rows.map(row => row.price);
             const statePrices = rows.filter(row => row.state_value).map(row => row.state_value);
-            
+
             const averageMarket = marketPrices.reduce((sum, price) => sum + price, 0) / marketPrices.length;
             const minMarket = Math.min(...marketPrices);
             const maxMarket = Math.max(...marketPrices);
@@ -111,13 +111,13 @@ db.serialize(() => {
             const hasDisplayName = columns.some(col => col.name === 'display_name');
             const hasMarketPrice = columns.some(col => col.name === 'market_price');
             const hasStateValue = columns.some(col => col.name === 'state_value');
-            
+
             if (!hasDisplayName || !hasMarketPrice || !hasStateValue) {
                 console.log('🔄 Migriere alte Datenbank...');
-                
+
                 // Backup der alten Tabelle
                 db.run(`CREATE TABLE IF NOT EXISTS current_prices_backup AS SELECT * FROM current_prices`);
-                
+
                 // Neue Spalten hinzufügen falls sie nicht existieren
                 if (!hasDisplayName) {
                     db.run(`ALTER TABLE current_prices ADD COLUMN display_name TEXT DEFAULT ''`);
@@ -128,7 +128,7 @@ db.serialize(() => {
                     db.run(`ALTER TABLE current_prices ADD COLUMN state_value REAL DEFAULT NULL`);
                     db.run(`UPDATE current_prices SET market_price = price WHERE market_price = 0`);
                 }
-                
+
                 console.log('✅ Datenbank-Migration abgeschlossen!');
             }
         }
@@ -139,10 +139,10 @@ db.serialize(() => {
         if (!err && columns) {
             const hasDisplayName = columns.some(col => col.name === 'display_name');
             const hasMarketPrice = columns.some(col => col.name === 'market_price');
-            
+
             if (!hasDisplayName || !hasMarketPrice) {
                 console.log('🔄 Migriere Historie-Tabelle...');
-                
+
                 if (!hasDisplayName) {
                     db.run(`ALTER TABLE price_history ADD COLUMN display_name TEXT DEFAULT ''`);
                     db.run(`UPDATE price_history SET display_name = item_name WHERE display_name = ''`);
@@ -152,7 +152,7 @@ db.serialize(() => {
                     db.run(`ALTER TABLE price_history ADD COLUMN state_value REAL DEFAULT NULL`);
                     db.run(`UPDATE price_history SET market_price = price WHERE market_price = 0`);
                 }
-                
+
                 console.log('✅ Historie-Migration abgeschlossen!');
             }
         }
@@ -283,7 +283,7 @@ client.on('interactionCreate', async interaction => {
 // Autocomplete Handler
 async function handleAutocomplete(interaction) {
     const focusedValue = interaction.options.getFocused();
-    
+
     db.all(
         'SELECT DISTINCT display_name, item_name FROM current_prices WHERE display_name LIKE ? OR item_name LIKE ? ORDER BY display_name LIMIT 25',
         [`%${focusedValue}%`, `%${focusedValue.toLowerCase()}%`],
@@ -328,18 +328,41 @@ async function handleAddPrice(interaction) {
             return;
         }
 
+
+
+
+
         // Bestimme finale Werte - behalte alte Werte wenn neue nicht angegeben
         let finalStateValue = stateValue;
         let finalImageUrl = imageUrl;
+
+
+
+
+
+
+
+
+
 
         if (existingRow) {
             // Behalte alte Werte wenn keine neuen angegeben wurden
             if (stateValue === null && existingRow.state_value !== null) {
                 finalStateValue = existingRow.state_value;
+
+
+
+
+
+
+
             }
             if (!imageUrl && existingRow.image_url) {
                 finalImageUrl = existingRow.image_url;
+
             }
+
+
         }
 
         db.run(
@@ -444,7 +467,7 @@ async function handleShowPrice(interaction) {
                 const profitPercent = ((profit / row.state_value) * 100).toFixed(1);
                 const profitColor = profit > 0 ? '📈' : '📉';
                 const profitText = profit > 0 ? 'Gewinn' : 'Verlust';
-                
+
                 embed.addFields({
                     name: `${profitColor} ${profitText} pro Stück`,
                     value: `**${formatCurrency(Math.abs(profit))}** (${Math.abs(profitPercent)}%)`,
@@ -495,13 +518,13 @@ async function handleShowAllPrices(interaction) {
                 const emoji = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '📦';
                 itemList += `${emoji} **${row.display_name}**\n`;
                 itemList += `💰 ${formatCurrency(row.market_price)}`;
-                
+
                 if (row.state_value) {
                     const profit = row.market_price - row.state_value;
                     const profitEmoji = profit > 0 ? '📈' : profit < 0 ? '📉' : '➡️';
                     itemList += ` | 🏛️ ${formatCurrency(row.state_value)} ${profitEmoji}`;
                 }
-                
+
                 itemList += ` • <t:${Math.floor(new Date(row.last_updated).getTime() / 1000)}:R>\n\n`;
             });
 
@@ -640,7 +663,7 @@ async function handlePriceHistory(interaction) {
                 interaction.followUp({ embeds: [embed], files: [attachment] });
             } catch (chartError) {
                 console.error('Chart Error:', chartError);
-                
+
                 // Fallback: Text-basierte Anzeige
                 const embed = new EmbedBuilder()
                     .setColor('#ff6600')
